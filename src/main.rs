@@ -139,10 +139,79 @@ fn pattern_match(text: &[u8], pattern: &[u8]) -> Vec<u32> {
         .collect()
 }
 
+fn clumps(text: &[u8], k: u32, t: u32, l: u32) -> HashSet<Vec<u8>> {
+    let k_ = usize::try_from(k).unwrap();
+    let l_ = usize::try_from(l).unwrap();
+
+    // initialize count array + clumps with counts from first window
+    let mut clump = vec![false; usize::checked_pow(4, k).unwrap()];
+    let mut counts = count_array(&text[..l_], k);
+    counts
+        .iter()
+        .enumerate()
+        .for_each(|(idx, &count)| {
+            if count >= t {
+                clump[idx] = true;
+            }
+        });
+
+    let mut update_clumps = |init_kmer, final_kmer| {
+        counts[seq_to_num(init_kmer)] -= 1;
+        let final_ind = seq_to_num(final_kmer);
+        counts[final_ind] += 1;
+        if counts[final_ind] >= t {
+            clump[final_ind] = true;
+        }
+    };
+
+    text
+        .windows(l_)
+        .for_each(|window| {
+            update_clumps(&window[..k_], &window[l_ - k_..])
+        });
+
+    clump
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &c)| if c {Some(num_to_seq(idx, k))} else {None})
+        .collect()
+
+}
+
+fn clumps_hash(text: &[u8], k: u32, t: u32, l: u32) -> HashSet<Vec<u8>> {
+    let k_ = usize::try_from(k).unwrap();
+    let l_ = usize::try_from(l).unwrap();
+
+    let mut clump: HashSet<usize> = HashSet::new();
+    let mut counts = count_map(&text[..l_], k);
+
+    let mut update_clumps = |init_kmer, final_kmer| {
+        *counts.get_mut(&seq_to_num(init_kmer)).unwrap() -= 1;
+        let final_ind = seq_to_num(final_kmer);
+        let final_count = counts.entry(final_ind).or_insert(0);
+        *final_count += 1;
+        if *final_count >= t {
+            clump.insert(final_ind);
+        }
+    };
+
+    text
+        .windows(l_)
+        .for_each(|window| {
+            update_clumps(&window[..k_], &window[l_ - k_..])
+        });
+
+    clump
+        .iter()
+        .map(|&idx| num_to_seq(idx, k))
+        .collect()
+}
+
+
+
 //------------------------------
 
 mod cli {
-    use std::path::PathBuf;
     use structopt::StructOpt;
 
     #[derive(StructOpt, Debug)]
@@ -188,8 +257,19 @@ mod cli {
             pattern: String
         },
 
+        Clumps {
+            #[structopt(short)]
+            text: String,
+            #[structopt(short="f")]
+            is_file: bool,
+            #[structopt(short)]
+            k: u32,
+            #[structopt(short)]
+            l: u32,
+            #[structopt(short="h")]
+            t: u32
+        },
     }
-
 }
 
 use std::path::PathBuf;
@@ -228,6 +308,16 @@ fn main() {
             for ind in pattern_match(&seq, &seqs::from_str(&pattern)) {
                 print!("{} ", ind.to_string());
             };
+        },
+
+        cli::Command::Clumps{text, is_file, k, t, l} => {
+            let seq = match is_file {
+                false => seqs::from_str(&text),
+                true => seqs::from_file(&PathBuf::from(&text))
+            };
+            println!("{:?}",
+                clumps_hash(&seq, k, t, l).iter().map(|seq| seqs::to_str(&seq)).collect::<Vec<_>>()
+            )
         },
     }
 }
